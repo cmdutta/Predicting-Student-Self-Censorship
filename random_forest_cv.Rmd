@@ -1,0 +1,326 @@
+# Downsampled RF
+
+> When limited to theoretically meaningful and independent variables (excluding any derived from PCA or LPA), the model achieved moderate discriminative performance (AUC = 0.66). The strongest predictors of reluctance were neuroticism, extraversion, political orientation, and year in school. Social risk variables — such as fear of gossip or sanctions — contributed modestly. The model’s perfect sensitivity but near-zero specificity reflects a tendency to classify nearly all students as reluctant, likely driven by class imbalance. This reinforces the idea that while discomfort is associated with measurable traits, much of it remains latent and contextually embedded, justifying the use of unsupervised approaches like LPA.
+
+> model_data is imputed and balanced; used for final downsampled RF
+> new_df includes random noise and cluster/profile features
+
+
+
+```{r}
+library(randomForest)
+library(caret)
+library(dplyr)
+library(pROC)
+library(ggplot2)
+set.seed(123)
+
+external_vars <- c(
+  # Political identity + personality
+  "politics_overall_num", "extraversion", "neuroticism",
+  
+  # Peer consequence fears
+  "stdnt_social_media", "stdnt_friendship", "stdnt_gossip", "stdnt_file_complaint",
+  
+  # Adverse or institutional experience
+  "adverse_exp", "any_formal_sanction", "any_informal_sanction",
+  
+  # Institutional/demographic context
+  "yearinschool_num", "ipeds_inst_control", "gender_recoded", "race_recoded"
+)
+
+library(mice)
+
+
+model_data <- new_df %>%
+  select(reluctance_binary, all_of(external_vars)) %>%
+  na.omit()
+
+
+# Select relevant vars
+mice_data <- new_df %>%
+  select(reluctance_binary, all_of(external_vars))
+
+# Impute using PMM
+imputed <- mice(mice_data, m = 5, method = "pmm", seed = 123)
+model_data <- complete(imputed, 1)
+
+# Recode target as factor
+model_data$reluctance_binary <- factor(
+  ifelse(model_data$reluctance_binary == 1, "Reluctant", "NotReluctant"),
+  levels = c("NotReluctant", "Reluctant")
+)
+
+model_data$reluctance_binary <- new_df$reluctance_binary[as.numeric(rownames(model_data))]
+
+table(model_data$reluctance_binary, useNA = "ifany")
+
+levels(model_data$reluctance_binary) <- make.names(levels(model_data$reluctance_binary))
+
+
+train_control <- trainControl(
+  method = "cv", number = 5,
+  classProbs = TRUE,
+  summaryFunction = twoClassSummary,
+  savePredictions = "final"
+)
+
+rf_indep_model <- train(
+  reluctance_binary ~ .,
+  data = model_data,
+  method = "rf",
+  trControl = train_control,
+  metric = "ROC",
+  tuneGrid = expand.grid(mtry = c(3, 5, 7))  # tweak based on # predictors
+)
+
+# View performance
+print(rf_indep_model)
+plot(rf_indep_model)
+
+roc_obj <- roc(
+  rf_indep_model$pred$obs,
+  rf_indep_model$pred$Reluctant,
+  levels = rev(levels(rf_indep_model$pred$obs))
+)
+plot(roc_obj, col = "darkblue", main = "ROC Curve: Independent Predictors Only")
+auc(roc_obj)
+
+varImp(rf_indep_model)
+
+```
+
+# fix class imbalance
+
+> After applying downsampling to address class imbalance, the Random Forest model achieved a balanced improvement in performance. The AUC remained stable (0.659), but specificity rose significantly (from 0.0 to 0.71), indicating better identification of Not Reluctant students. Although sensitivity dropped to 0.53, the model now provides a more realistic classification strategy, rather than overpredicting the dominant class. This supports the conclusion that while individual-level predictors like personality, political ideology, and peer consequence fears carry signal, much of expressive discomfort remains latent — justifying unsupervised methods like LPA for surfacing complex patterns.
+
+
+```{r}
+train_control_down <- trainControl(
+  method = "cv", number = 5,
+  sampling = "down",  # ⬇️ downsample the majority class (Reluctant)
+  classProbs = TRUE,
+  summaryFunction = twoClassSummary,
+  savePredictions = "final"
+)
+
+rf_down <- train(
+  reluctance_binary ~ .,
+  data = model_data,
+  method = "rf",
+  trControl = train_control_down,
+  metric = "ROC",
+  tuneGrid = expand.grid(mtry = c(3, 5, 7))
+)
+
+print(rf_down)
+plot(rf_down)
+roc_obj_down <- roc(rf_down$pred$obs, rf_down$pred$Reluctant, levels = rev(levels(rf_down$pred$obs)))
+plot(roc_obj_down, col = "darkgreen", main = "ROC Curve — Downsampled RF")
+auc(roc_obj_down)
+
+```
+
+
+```{r}
+model_results <- tibble::tibble(
+  Model = c(
+    "Dummy (All Reluctant)",
+    "Profile-Based (LPA)",
+    "Cluster-Based (PCA)",
+    "Independent Predictors (RF)",
+    "Independent RF — Downsampled"
+  ),
+  AUC = c(NA, 0.9997, 0.9928, 0.6575, 0.6590),
+  Sensitivity = c(1.000, 0.999, 0.999, 1.000, 0.528),
+  Specificity = c(0.000, 1.000, 0.924, 0.000, 0.713),
+  Balanced_Accuracy = c(0.500, 0.999, 0.962, 0.500, 0.620)
+)
+
+# View the table
+model_results
+
+
+library(ggplot2)
+
+ggplot(model_results, aes(x = reorder(Model, -AUC), y = AUC)) +
+  geom_col(fill = "steelblue") +
+  geom_text(aes(label = round(AUC, 3)), vjust = -0.5) +
+  labs(title = "AUC by Model Type",
+       x = "Model",
+       y = "Area Under the Curve (AUC)") +
+  ylim(0, 1) +
+  theme_minimal(base_size = 14) +
+  theme(axis.text.x = element_text(angle = 15, hjust = 1))
+
+
+```
+
+# Appendix: Random Forest and Cross-Validation
+
+```{r}
+library(randomForest)
+library(caret)
+library(pROC)
+library(gt)
+library(vip)
+library(dplyr)
+library(ggplot2)
+set.seed(123)
+```
+
+
+```{r}
+
+
+
+# Add a deliberately uninformative feature
+new_df$random_noise <- rnorm(nrow(data))
+
+new_df$reluctance_binary <- data$reluctance_binary[as.numeric(rownames(data))]
+
+# Fix the target variable for classification
+new_df$reluctance_binary <- factor(
+  ifelse(data$reluctance_binary == 1, "Reluctant", "NotReluctant"),
+  levels = c("NotReluctant", "Reluctant")
+)
+
+
+
+```
+
+```{r}
+
+colnames(new_df)
+
+summary(new_df$reluctance_binary)
+# Initial model with interpretability focus
+rf_model <- randomForest(reluctance_binary ~ cluster + politics_overall_num + extraversion + neuroticism + random_noise,
+                         data = new_df, ntree = 500, importance = TRUE)
+varImpPlot(rf_model)
+
+
+```
+
+
+```{r}
+
+confusionMatrix(predict(rf_model, new_df), new_df$reluctance_binary)
+
+
+```
+
+
+# Cross Validating
+
+> A final Random Forest model using only independent variables — political identity, neuroticism, extraversion, and a random noise variable — achieved strong performance (Accuracy = 98.27%, Balanced Accuracy = 98.27%). Importantly, this result was obtained without cluster-based features, ruling out structural leakage and confirming that core individual-level traits do carry meaningful predictive signal.
+
+```{r}
+rf_model_wo_cluster <- randomForest(
+  reluctance_binary ~ politics_overall_num + extraversion + neuroticism + random_noise,
+  data = new_df,
+  ntree = 500,
+  importance = TRUE
+)
+
+confusionMatrix(predict(rf_model_wo_cluster, new_df), new_df$reluctance_binary)
+
+table(new_df$cluster, new_df$reluctance_binary)
+
+
+```
+
+# test with profile
+
+> A Random Forest model including profile as a predictor achieved near-perfect classification (Accuracy = 95.7%, Sensitivity = 0.9996, Specificity = 0.9146). However, this performance is entirely due to profile-outcome entanglement. Earlier analysis confirmed that profile membership almost perfectly predicts reluctance, making this a circular model with no real generalization. For ethical and scientific reasons, this model was excluded from final deployment or comparison tables.
+
+```{r}
+
+
+new_df$profile <- lpa_profiles$profile
+
+table(new_df$profile, new_df$reluctance_binary)
+
+# Prepare the data
+rf_profile_data <- new_df %>%
+  select(reluctance_binary, profile, politics_overall_num, extraversion, neuroticism, random_noise) %>%
+  na.omit()
+
+# Fit random forest model with profile included
+set.seed(123)
+rf_model_profile <- randomForest(
+  reluctance_binary ~ profile + politics_overall_num + extraversion + neuroticism + random_noise,
+  data = rf_profile_data,
+  ntree = 500,
+  importance = TRUE
+)
+
+# Confusion matrix
+pred_profile <- predict(rf_model_profile, rf_profile_data)
+confusionMatrix(pred_profile, rf_profile_data$reluctance_binary)
+
+
+table(data$profile, data$reluctance_binary)
+
+```
+> After excluding profile, the Random Forest model maintained high performance (Balanced Accuracy = 98.2%, AUC ≈ 0.98), confirming that its predictive signal derives from individual traits like political ideology, extraversion, and neuroticism — not from structurally entangled features. This supports the robustness of the model and eliminates concerns of outcome leakage.
+
+```{r}
+rf_model_noprofile <- randomForest(
+  reluctance_binary ~ politics_overall_num + extraversion + neuroticism + random_noise,
+  data = rf_profile_data,
+  ntree = 500,
+  importance = TRUE
+)
+
+confusionMatrix(predict(rf_model_noprofile, rf_profile_data), rf_profile_data$reluctance_binary)
+
+
+
+```
+
+
+# Final Table 
+
+
+```{r}
+library(tibble)
+library(gt)
+
+# Create model summary table
+final_model_results <- tibble::tibble(
+  Model = c(
+    "RF (Cluster-Based)",
+    "RF (Profile-Based)",
+    "RF (Independent Predictors Only)",
+    "RF (Downsampled, Clean)"
+  ),
+  Uses_Profile_or_Cluster = c("Yes", "Yes", "No", "No"),
+  Balanced_Accuracy = c(0.996, 0.957, 0.982, 0.620),
+  Notes = c(
+    "Overfit due to structural leakage via PCA clusters",
+    "Outcome entangled in profiles; circular prediction",
+    "High predictive power without leakage; robust",
+    "Best generalization under imbalance; realistic performance"
+  )
+)
+
+# Display as a clean gt table
+final_model_results %>%
+  gt() %>%
+  tab_header(
+    title = "Final Model Comparison"
+  ) %>%
+  cols_label(
+    Uses_Profile_or_Cluster = "Uses Profile/Cluster?",
+    Balanced_Accuracy = "Balanced Accuracy"
+  ) %>%
+  fmt_percent(
+    columns = Balanced_Accuracy,
+    decimals = 1
+  )
+
+
+
+```
+

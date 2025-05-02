@@ -1,0 +1,87 @@
+---
+output:
+  pdf_document: default
+  html_document: default
+---
+# Linear Regression Models
+
+```{r}
+baseline_model <- glm(reluctance_binary ~ controversial_discuss_score, 
+                      data = data, family = "binomial")
+summary(baseline_model)
+
+ggplot(data, aes(x = controversial_discuss_score, fill = reluctance_binary)) +
+  geom_histogram(binwidth = 0.1, position = "identity", alpha = 0.5, color = "black") +
+  labs(title = "Distribution of Controversial Discuss Score by Reluctance",
+       x = "Average Reluctance Score (1–4)",
+       y = "Count") +
+  scale_fill_manual(values = c("Reluctant" = "red", "NotReluctant" = "blue"),
+                    name = "Reluctance Binary") +
+  theme_minimal()
+
+# Dummy Baseline Majority Class
+
+# Set everyone to "Reluctant" (majority class)
+data$dummy_pred <- factor("Reluctant", levels = levels(data$reluctance_binary))
+
+# Ground truth
+true_labels <- data$reluctance_binary
+
+# Confusion matrix
+library(caret)
+confusionMatrix(data$dummy_pred, true_labels)
+
+
+```
+
+```{r}
+library(broom)
+library(gt)
+
+lm_model <- lm(controversial_discuss_score ~ politics_overall_num + extraversion + neuroticism + openness, data = data)
+summary(lm_model)
+
+tidy(lm_model) %>%
+  mutate(across(estimate:p.value, round, 4)) %>%
+  gt()
+
+```
+
+# Graphs
+
+```{r}
+# 1. Residuals vs Fitted plot
+plot(lm_model, which = 1)  # Base R diagnostic plot
+
+# 2. Q-Q Plot of Residuals
+plot(lm_model, which = 2)
+
+
+```
+
+
+
+```{r}
+# 3. Actual vs Predicted Plot
+
+data$lm_pred <- predict(lm_model)
+
+ggplot(data, aes(x = lm_pred, y = controversial_discuss_score)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = "lm", se = FALSE, color = "blue") +
+  labs(title = "Predicted vs. Actual Discuss Score",
+       x = "Predicted",
+       y = "Actual") +
+  theme_minimal()
+```
+
+
+
+```{r}
+ggplot(data.frame(resid = residuals(lm_model)), aes(x = resid)) +
+  geom_histogram(bins = 40, fill = "skyblue", color = "black") +
+  labs(title = "Histogram of Residuals", x = "Residuals")
+
+
+```
+

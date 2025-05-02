@@ -1,0 +1,148 @@
+# Feature Engineering
+
+```{r}
+
+require(tidyverse)
+require(rempsyc)
+library(FactoMineR)
+library(factoextra)
+library(rvest)
+library(dplyr)
+library(xml2)
+library(patchwork)
+library(gt)
+library(tibble)
+library(broom)
+
+library(readxl)
+library(lubridate)
+library(ggplot2)
+
+topics <- c(
+  "genderroles", "race", "politics", "trans", "religion",
+  "sexualorientation", "israelipalestinian", "covid", "freespeech", "abortion"
+)
+
+formal_sanctions <- c("stdnt_file_complaint", "instruc_grade", 
+                      "instruc_letter_of_rec")
+informal_sanctions <- c(
+  "stdnt_friendship", "stdnt_gossip", "stdnt_social_media", "stdnt_romantic", 
+  "stdnt_offensive", "instruc_dislike", "instruc_offensive", "instruc_incorrect")
+
+personality_vars <- c("extraversion", "neuroticism", "agreeableness", 
+                      "conscientiousness", "openness")
+
+colnames(data)
+
+# Main Feature Construction
+
+data <- data %>%
+  mutate(across(contains("_discuss"), ~ as.numeric(.), .names = "{col}_score"))
+
+data$controversial_discuss_score <- data %>%
+  select(paste0(topics, '_discuss_score')) %>%
+  rowMeans(na.rm = TRUE)
+
+data$yearinschool_num <- as.numeric(data$yearinschool)
+data$`(average of controversial topics)_discuss_score` <- data$controversial_discuss_score
+
+data$any_informal_sanction <- as.numeric(rowSums(select(data, 
+                            all_of(informal_sanctions)), na.rm = TRUE) >= 1)
+data$any_formal_sanction <- as.numeric(rowSums(select(data, 
+                                all_of(formal_sanctions)), na.rm = TRUE) >= 1)
+data$any_sanction <- as.numeric(rowSums(select(data, all_of(c(informal_sanctions, 
+                                        formal_sanctions))), na.rm = TRUE) >= 1)
+
+data$politics_overall_num <- as.numeric(data$politics_overall)
+
+data$politics_overall_bin <- factor(
+  ifelse(data$politics_overall_num < 4, "Left", "Right"),
+  levels = c("Left", "Right")
+)
+
+# Composite score: average reluctance
+data$controversial_discuss_score <- data %>%
+  select(paste0(topics, "_discuss_score")) %>%
+  rowMeans(na.rm = TRUE)
+
+# Store average under alternative column label (optional)
+data$`(average of controversial topics)_discuss_score` <- data$controversial_discuss_score
+
+# Derived binary: reluctant on ANY topic (≤ 3)
+data$at_least_one_reluctant <- factor(
+  apply(select(data, paste0(topics, "_discuss_score")), 1, function(row) any(row <= 3, na.rm = TRUE)),
+  levels = c(FALSE, TRUE),
+  labels = c("Not Reluctant", "Reluctant")
+)
+
+# Alias for modeling
+data$reluctance_binary <- factor(
+  ifelse(data$controversial_discuss_score < 3, "Reluctant", "Not Reluctant"),
+  levels = c("Reluctant", "Not Reluctant")
+)
+
+summary(data$reluctance_binary)
+
+
+# Other derived features
+data$yearinschool_num <- as.numeric(data$yearinschool)
+summary(data$reluctance_binary)
+data$politics_overall_num <- as.numeric(data$politics_overall)
+
+
+```
+
+# Data Quality Checks
+
+```{r}
+summary(data$controversial_discuss_score)
+table(data$gender_recoded)
+table(data$ipeds_inst_control)
+```
+
+
+```{r}
+### Demographic Distributions
+demo_table <- function(variable) {
+  freq_table <- table(variable)
+  df <- as.data.frame(freq_table)
+  colnames(df) <- c("Category", "Frequency")
+  df$Percentage <- sprintf("%.2f%%", df$Frequency / sum(df$Frequency) * 100)
+  return(nice_table(df))
+}
+
+demo_table(data$gender_recoded)
+demo_table(data$race_recoded)
+demo_table(data$politics_overall)
+demo_table(data$religion_recoded)
+demo_table(data$ipeds_inst_control)
+
+```
+
+## Visualizations
+
+### Reluctance by topic
+
+```{r}
+reluctant_prop_table <- data %>%
+  select(paste0(c(topics, "typical"), "_discuss_score")) %>%
+  gather(variable, value, matches("_discuss_score")) %>%
+  mutate(is_reluctant = value >= 3 ) %>%
+  group_by(variable, is_reluctant) %>%
+  summarise(count = n(), .groups="drop_last") %>%
+  mutate(prop = count / sum(count)) %>%
+  filter(is_reluctant) %>%
+  arrange(desc(prop))
+
+ggplot(reluctant_prop_table, aes(x = reorder(variable, -prop), 
+                                 y = prop, fill = is_reluctant)) +
+  geom_bar(stat = "identity") +
+  theme_minimal() +
+  labs(title = "Proportion of Reluctant Students by Topic", 
+       x = "Topic", y = "Proportion") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  
+
+
+```
+
+

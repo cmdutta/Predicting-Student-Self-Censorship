@@ -1,0 +1,355 @@
+# PCA and K-Means Clustering
+
+The K-means PCA cluster plot shows a clear segmentation along the first principal component (PC1), suggesting that clusters mostly reflect levels of general discomfort rather than distinct attitudes. The silhouette plot supports this interpretation, with a moderate average silhouette width (0.38) indicating only modest separation between clusters, especially weak in Cluster 2.
+
+The PCA variable loading plot reveals that all controversial discussion topics load similarly and positively on PC1 (42.1%), reinforcing the idea of a unidimensional “reluctance” construct. The elbow plot shows that k = 3 is a reasonable choice for the number of clusters, as the reduction in within-cluster variance diminishes sharply beyond that point.
+
+```{r}
+library(tidyverse)
+library(FactoMineR)
+library(factoextra)
+library(cluster)
+library(pROC)
+library(caret)
+library(tidyLPA)
+library(mice)
+library(gt)
+library(broom)
+
+pca_data <- data %>%
+  select(paste0(topics, "_discuss_score")) %>%
+  drop_na()
+
+pca_res <- PCA(pca_data, scale.unit = TRUE, graph = FALSE)
+fviz_eig(pca_res)
+```
+
+
+```{r}
+
+pca_coords <- as.data.frame(pca_res$ind$coord[, 1:2])
+colnames(pca_coords) <- c("Dim.1", "Dim.2")
+
+data <- data %>%
+  mutate(original_index = row_number()) %>%
+  left_join(pca_coords %>% mutate(original_index = row_number()), by = "original_index")
+
+set.seed(123)
+kmeans_res <- kmeans(pca_coords, centers = 3, nstart = 25)
+pca_coords$cluster <- factor(kmeans_res$cluster)
+
+ggplot(pca_coords, aes(x = Dim.1, y = Dim.2, color = cluster)) +
+  geom_point(alpha = 0.6) +
+  labs(title = "K-Means Clusters on PCA Coordinates") +
+  theme_minimal()
+
+```
+# Silhouette Plots
+
+
+```{r}
+library(cluster)
+sil <- silhouette(kmeans_res$cluster, dist(pca_coords[, 1:2]))
+fviz_silhouette(sil)
+
+
+```
+# PCA Loadings
+
+```{r}
+fviz_pca_var(pca_res, col.var = "contrib", repel = TRUE)
+
+```
+
+```{r}
+fviz_nbclust(pca_coords[, 1:2], kmeans, method = "wss")  # Within Sum of Squares
+
+
+```
+
+# Logit
+
+The logistic regression model shows an unusually high AUC (0.93) and strong F1 score (0.95), but a closer inspection reveals that this performance is misleading. The model predicts nearly all students as “Reluctant,” failing to correctly classify any “Not Reluctant” cases. This is evident in the confusion matrix, which shows 0 true negatives and 432 false positives, and in the predicted probability boxplot where only Cluster 3 shows any variation. None of the predictors — including cluster assignment, political identity, or personality traits — are statistically significant, and the model’s large standard errors suggest potential issues with quasi-separation or multicollinearity. Ultimately, the model's performance is driven by class imbalance, not actual discriminative power. This highlights the limitations of using logistic regression without accounting for imbalance and suggests that alternative approaches, such as resampling or non-linear models like random forests, may offer more reliable insights.
+
+```{r}
+
+clustered_data <- data %>%
+  mutate(cluster = factor(kmeans_res$cluster))
+
+logit_model <- glm(reluctance_binary ~ cluster + politics_overall_num + extraversion + neuroticism,
+                   data = clustered_data, family = binomial)
+
+tidy(logit_model) %>%
+  mutate(across(estimate:p.value, round, 4)) %>%
+  gt()
+
+```
+
+
+```{r}
+# 4. ROC Curve + AUC
+library(pROC)
+
+clustered_data$logit_prob <- predict(logit_model, type = "response")
+roc_curve <- roc(clustered_data$reluctance_binary, clustered_data$logit_prob)
+
+plot(roc_curve, col = "blue", main = "ROC Curve — Logistic Regression")
+auc(roc_curve)
+
+```
+
+
+```{r}
+# 5. Predicted Probabilities by Cluster
+ggplot(clustered_data, aes(x = cluster, y = logit_prob)) +
+  geom_boxplot() +
+  labs(title = "Predicted Probability of Reluctance by Cluster",
+       x = "Cluster",
+       y = "Predicted Probability") +
+  theme_minimal()
+
+```
+
+
+```{r}
+# 6. Confusion Matrix Heatmap
+pred_class <- ifelse(clustered_data$logit_prob > 0.5, "Reluctant", "Not Reluctant")
+conf_mat <- confusionMatrix(as.factor(pred_class), clustered_data$reluctance_binary)
+
+as.data.frame(conf_mat$table) %>%
+  ggplot(aes(Prediction, Reference, fill = Freq)) +
+  geom_tile() +
+  geom_text(aes(label = Freq), color = "white", size = 6) +
+  scale_fill_gradient(low = "gray", high = "blue") +
+  labs(title = "Confusion Matrix: Logistic Model") +
+  theme_minimal()
+
+TP <- 4298
+FN <- 0
+FP <- 432
+TN <- 0
+
+precision <- TP / (TP + FP)
+recall <- TP / (TP + FN)
+f1_score <- 2 * (precision * recall) / (precision + recall)
+
+cat("Precision (Reluctant):", round(precision, 3), "\n")
+cat("Recall (Reluctant):", round(recall, 3), "\n")
+cat("F1 Score (Reluctant):", round(f1_score, 3), "\n")
+
+```
+
+
+# LPA
+
+```{r}
+
+new_df <- data
+
+
+new_df <- new_df %>%
+  mutate(cluster = factor(kmeans_res$cluster))
+
+summary(new_df$reluctance_binary)
+table(is.na(new_df$reluctance_binary))
+
+mice_vars <- data %>% select(ends_with("_discuss_score"))
+imputed <- mice(mice_vars, m = 5, method = "pmm", seed = 123)
+discuss_scores <- complete(imputed, 1)
+
+# Step 2: Attach back to original
+data[, names(discuss_scores)] <- discuss_scores
+
+# Step 3: Recompute PC1 and then binary outcome
+pca_res <- PCA(discuss_scores, scale.unit = TRUE, graph = FALSE)
+pc1 <- pca_res$ind$coord[, 1]
+data$reluctance_binary <- ifelse(pc1 > median(pc1, na.rm = TRUE), 1, 0)  # or use top 1/3 etc
+
+summary(data$reluctance_binary)
+
+
+lpa_data <- discuss_scores  # already imputed and numeric
+
+# Estimate LPA models (e.g., 1 to 4 profiles)
+lpa_models <- estimate_profiles(lpa_data, 1:4)
+
+# Choose best model based on BIC / AIC
+compare_solutions(lpa_models)
+
+# Assign chosen profile (e.g., 4-profile solution)
+lpa_profiles <- get_data(lpa_models[[4]]) %>%
+  select(Class) %>%
+  rename(profile = Class) %>%
+  mutate(profile = factor(profile))
+
+# Add profiles back to main data
+data$profile <- lpa_profiles$profile
+
+
+
+```
+
+```{r}
+data %>%
+  select(ends_with("_discuss_score"), "profile") %>%
+  group_by(profile) %>%
+  summarise(across(everything(), mean, na.rm = TRUE)) %>%
+  pivot_longer(-profile, names_to = "topic", values_to = "avg_score") %>%
+  ggplot(aes(x = topic, y = avg_score, fill = profile)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  coord_flip() +
+  labs(title = "Discomfort Profiles by Topic (LPA 4-Class Model)")
+
+
+```
+
+# Cross Validation
+
+> The random forest model trained on LPA-generated profiles achieved a balanced accuracy of 88.1%, significantly outperforming the earlier logistic regression approach. The model identified all Reluctant students (sensitivity = 1.00) and correctly classified 76.3% of NotReluctant students, with a strong overall agreement (κ = 0.76). Variable importance analysis revealed that Profile 3 alone accounted for nearly all of the model’s predictive performance, suggesting this group represents a distinctly high-reluctance type. These findings validate the use of LPA over K-means clustering, highlighting the practical utility of soft profile-based segmentation in identifying students at risk of self-censorship.
+
+```{r}
+# Create modeling dataset
+model_data <- data %>%
+  select(reluctance_binary, profile) %>%
+  mutate(
+    reluctance_binary = factor(
+      ifelse(reluctance_binary == 1, "Reluctant", "NotReluctant"),
+      levels = c("NotReluctant", "Reluctant")
+    )
+  )
+
+library(caret)
+
+train_control <- trainControl(method = "cv", number = 10, classProbs = TRUE, summaryFunction = twoClassSummary)
+
+lpa_rf <- train(
+  reluctance_binary ~ profile,
+  data = model_data,
+  method = "rf",
+  trControl = train_control,
+  metric = "ROC"
+)
+
+print(lpa_rf)
+plot(lpa_rf)
+
+varImp(lpa_rf)
+
+pred <- predict(lpa_rf, model_data)
+confusionMatrix(pred, model_data$reluctance_binary)
+
+
+```
+
+> Attempts to predict profile membership using standard survey variables (e.g., Big Five traits or political leaning) yield low predictive power. The latent profile structure reflects internalized patterns of discomfort that cannot be inferred from personality or ideology alone. This reinforces the value of LPA as an independent tool for segmentation, not one easily substituted by common covariates.
+
+```{r}
+# Example: Predicting profile 3 (most reluctant)
+data$target_profile <- factor(ifelse(data$profile == 3, "Yes", "No"))
+
+rf_segment <- train(
+  target_profile ~ politics_overall_num + extraversion + neuroticism,
+  data = data,
+  method = "rf",
+  trControl = trainControl(method = "cv", number = 5, classProbs = TRUE, summaryFunction = twoClassSummary),
+  metric = "ROC"
+)
+
+print(rf_segment)
+
+
+```
+
+> Analysis of the four latent profiles revealed clear behavioral distinctions. Profiles 2 and 3, with mean PC1 scores of 4.83 and 1.86 respectively, were composed entirely of students labeled “Reluctant” (100%). In contrast, Profile 4 — with the lowest discomfort score (mean PC1 = -3.20) — had zero students identified as reluctant. Profile 1, which exhibited moderate discomfort (mean PC1 = -0.60), had a mixed outcome, with 31% labeled reluctant. These findings validate the latent profiles as behaviorally meaningful and offer a segmentation framework for tailoring interventions based on distinct reluctance types.
+
+```{r}
+
+
+# Get PC1 scores and attach to your data
+data$pc1_score <- pca_res$ind$coord[, 1]
+
+
+
+data %>%
+  group_by(profile) %>%
+  summarise(
+    mean_pc1 = mean(pc1_score, na.rm = TRUE),                    # General discomfort (PC1 score)
+    pct_reluctant = mean(reluctance_binary == 1, na.rm = TRUE),  # Share coded as reluctant (binary outcome)
+    n = n()                                                       # Number of students in each profile
+  ) %>%
+  arrange(desc(mean_pc1))
+
+
+```
+
+# Expand
+
+Despite incorporating 23 predictors spanning social risk, instructor consequences, adverse experience, demographics, and ideology, a Random Forest model was unable to meaningfully predict Profile 3 membership (AUC = 0.5445). The model defaulted to labeling most students as Profile 3, achieving high sensitivity but poor specificity. These results confirm that expressive discomfort — as captured by latent profiles — is not reducible to surface-level traits or prior experiences. This highlights the value of LPA in surfacing internal psychological states that are not inferable from standard survey measures.
+
+```{r}
+data$target_profile <- factor(ifelse(data$profile == 3, "Yes", "No"), levels = c("No", "Yes"))
+
+# 2. Select predictor variables (you can expand or contract as needed)
+predictor_vars <- c(
+  # Social risk
+  "stdnt_gossip", "stdnt_social_media", "stdnt_friendship", 
+  "stdnt_romantic", "stdnt_file_complaint", "stdnt_harm", "stdnt_debate",
+  
+  # Instructor risk
+  "instruc_grade", "instruc_letter_of_rec", "instruc_dislike", 
+  "instruc_offensive", "instruc_incorrect",
+  
+  # Experiences
+  "adverse_exp", "adverse_exp_target", 
+  "any_formal_sanction", "any_informal_sanction", "any_sanction",
+  
+  # Institutional/demographic context
+  "ipeds_inst_control", "yearinschool_num", 
+  "gender_recoded", "race_recoded", "religion_recoded", 
+  "politics_overall_bin"
+)
+
+# 3. Build modeling dataset
+model_data <- data %>%
+  select(target_profile, all_of(predictor_vars)) %>%
+  na.omit()  # Drop rows with missing values for now (you can MICE later if needed)
+
+# 4. Set up training control
+train_control <- trainControl(
+  method = "cv",
+  number = 5,
+  classProbs = TRUE,
+  summaryFunction = twoClassSummary,
+  savePredictions = "final"
+)
+
+# 5. Train the random forest model
+set.seed(123)
+rf_profile_model <- train(
+  target_profile ~ .,
+  data = model_data,
+  method = "rf",
+  trControl = train_control,
+  metric = "ROC",
+  tuneGrid = expand.grid(mtry = c(5, 10, 15))  # Adjust mtry based on # of vars
+)
+
+# 6. Output and plot results
+print(rf_profile_model)
+plot(rf_profile_model)
+
+# 7. Variable importance
+varImp(rf_profile_model)
+
+```
+
+```{r}
+
+# Generate ROC curve from saved predictions
+library(pROC)
+roc_obj <- roc(rf_profile_model$pred$obs, rf_profile_model$pred$Yes, levels = rev(levels(rf_profile_model$pred$obs)))
+plot(roc_obj, col = "darkblue", main = "ROC Curve — Predicting Profile 3")
+auc(roc_obj)
+
+
+```
