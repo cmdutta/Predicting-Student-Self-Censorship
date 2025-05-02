@@ -1,0 +1,13 @@
+# Load and Preview Data
+
+```{r}
+
+library(tibble)
+library(tidyverse)
+
+
+load("data_public.Rdata")
+data <- as_tibble(data)
+glimpse(data)
+```
+
