@@ -13,7 +13,6 @@ library(patchwork)
 library(gt)
 library(tibble)
 library(broom)
-
 library(readxl)
 library(lubridate)
 library(ggplot2)
@@ -55,40 +54,28 @@ data$any_sanction <- as.numeric(rowSums(select(data, all_of(c(informal_sanctions
 
 data$politics_overall_num <- as.numeric(data$politics_overall)
 
+# Political binning: values < 4 indicate "Left" (on 1–7 ideology scale)
 data$politics_overall_bin <- factor(
   ifelse(data$politics_overall_num < 4, "Left", "Right"),
   levels = c("Left", "Right")
 )
 
-# Composite score: average reluctance
-data$controversial_discuss_score <- data %>%
-  select(paste0(topics, "_discuss_score")) %>%
-  rowMeans(na.rm = TRUE)
 
-# Store average under alternative column label (optional)
-data$`(average of controversial topics)_discuss_score` <- data$controversial_discuss_score
 
-# Derived binary: reluctant on ANY topic (≤ 3)
+# Derived binary: reluctant on ANY topic (≤ 3 on 7-point scale indicates discomfort expressing opinion)
 data$at_least_one_reluctant <- factor(
   apply(select(data, paste0(topics, "_discuss_score")), 1, function(row) any(row <= 3, na.rm = TRUE)),
   levels = c(FALSE, TRUE),
   labels = c("Not Reluctant", "Reluctant")
 )
 
-# Alias for modeling
+# Modeling label: average reluctance < 3 indicates general discomfort
 data$reluctance_binary <- factor(
   ifelse(data$controversial_discuss_score < 3, "Reluctant", "Not Reluctant"),
   levels = c("Reluctant", "Not Reluctant")
 )
 
 summary(data$reluctance_binary)
-
-
-# Other derived features
-data$yearinschool_num <- as.numeric(data$yearinschool)
-summary(data$reluctance_binary)
-data$politics_overall_num <- as.numeric(data$politics_overall)
-
 
 ```
 

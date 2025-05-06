@@ -96,6 +96,9 @@ varImp(rf_indep_model)
 
 
 ```{r}
+
+# Downsampling used to address severe class imbalance (Reluctant ≫ NotReluctant). Improves specificity and balanced accuracy without relying on synthetic data.
+
 train_control_down <- trainControl(
   method = "cv", number = 5,
   sampling = "down",  # ⬇️ downsample the majority class (Reluctant)
@@ -115,6 +118,9 @@ rf_down <- train(
 
 print(rf_down)
 plot(rf_down)
+
+# Computing AUC manually for transparency and validation of model output
+
 roc_obj_down <- roc(rf_down$pred$obs, rf_down$pred$Reluctant, levels = rev(levels(rf_down$pred$obs)))
 plot(roc_obj_down, col = "darkgreen", main = "ROC Curve — Downsampled RF")
 auc(roc_obj_down)
@@ -266,6 +272,9 @@ table(data$profile, data$reluctance_binary)
 > After excluding profile, the Random Forest model maintained high performance (Balanced Accuracy = 98.2%, AUC ≈ 0.98), confirming that its predictive signal derives from individual traits like political ideology, extraversion, and neuroticism — not from structurally entangled features. This supports the robustness of the model and eliminates concerns of outcome leakage.
 
 ```{r}
+
+# Profile variable excluded to prevent circular prediction. Ensures generalizability and fairness in predictive modeling.
+
 rf_model_noprofile <- randomForest(
   reluctance_binary ~ politics_overall_num + extraversion + neuroticism + random_noise,
   data = rf_profile_data,

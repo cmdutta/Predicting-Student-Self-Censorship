@@ -23,7 +23,7 @@ pca_data <- data %>%
 pca_res <- PCA(pca_data, scale.unit = TRUE, graph = FALSE)
 fviz_eig(pca_res)
 ```
-
+# ----- K-MEANS CLUSTERING ON PCA COORDINATES -----
 
 ```{r}
 
@@ -44,8 +44,7 @@ ggplot(pca_coords, aes(x = Dim.1, y = Dim.2, color = cluster)) +
   theme_minimal()
 
 ```
-# Silhouette Plots
-
+# ----- SILHOUETTE ANALYSIS -----
 
 ```{r}
 library(cluster)
@@ -54,7 +53,7 @@ fviz_silhouette(sil)
 
 
 ```
-# PCA Loadings
+# ----- PCA LOADINGS AND CLUSTER INTERPRETATION -----
 
 ```{r}
 fviz_pca_var(pca_res, col.var = "contrib", repel = TRUE)
@@ -67,7 +66,7 @@ fviz_nbclust(pca_coords[, 1:2], kmeans, method = "wss")  # Within Sum of Squares
 
 ```
 
-# Logit
+# ----- LOGISTIC REGRESSION ON CLUSTERS -----
 
 The logistic regression model shows an unusually high AUC (0.93) and strong F1 score (0.95), but a closer inspection reveals that this performance is misleading. The model predicts nearly all students as “Reluctant,” failing to correctly classify any “Not Reluctant” cases. This is evident in the confusion matrix, which shows 0 true negatives and 432 false positives, and in the predicted probability boxplot where only Cluster 3 shows any variation. None of the predictors — including cluster assignment, political identity, or personality traits — are statistically significant, and the model’s large standard errors suggest potential issues with quasi-separation or multicollinearity. Ultimately, the model's performance is driven by class imbalance, not actual discriminative power. This highlights the limitations of using logistic regression without accounting for imbalance and suggests that alternative approaches, such as resampling or non-linear models like random forests, may offer more reliable insights.
 
@@ -124,6 +123,8 @@ as.data.frame(conf_mat$table) %>%
   labs(title = "Confusion Matrix: Logistic Model") +
   theme_minimal()
 
+# Manually calculating precision, recall, and F1 for clarity and interpretability, even though confusionMatrix() returns these metrics. This reinforces the model’s class imbalance failure.
+
 TP <- 4298
 FN <- 0
 FP <- 432
@@ -140,7 +141,7 @@ cat("F1 Score (Reluctant):", round(f1_score, 3), "\n")
 ```
 
 
-# LPA
+# ----- LATENT PROFILE ANALYSIS (LPA) -----
 
 ```{r}
 
@@ -152,6 +153,8 @@ new_df <- new_df %>%
 
 summary(new_df$reluctance_binary)
 table(is.na(new_df$reluctance_binary))
+
+# Imputing missing values only for controversial discussion scores. These variables are primary inputs for PCA and LPA, and complete data improves PC1 estimation and profile stability.
 
 mice_vars <- data %>% select(ends_with("_discuss_score"))
 imputed <- mice(mice_vars, m = 5, method = "pmm", seed = 123)
@@ -189,6 +192,8 @@ data$profile <- lpa_profiles$profile
 
 ```
 
+# ----- PROFILE VISUALIZATION BY TOPIC -----
+
 ```{r}
 data %>%
   select(ends_with("_discuss_score"), "profile") %>%
@@ -203,7 +208,7 @@ data %>%
 
 ```
 
-# Cross Validation
+# ----- RANDOM FOREST ON LPA SEGMENTS -----
 
 > The random forest model trained on LPA-generated profiles achieved a balanced accuracy of 88.1%, significantly outperforming the earlier logistic regression approach. The model identified all Reluctant students (sensitivity = 1.00) and correctly classified 76.3% of NotReluctant students, with a strong overall agreement (κ = 0.76). Variable importance analysis revealed that Profile 3 alone accounted for nearly all of the model’s predictive performance, suggesting this group represents a distinctly high-reluctance type. These findings validate the use of LPA over K-means clustering, highlighting the practical utility of soft profile-based segmentation in identifying students at risk of self-censorship.
 
@@ -241,6 +246,8 @@ confusionMatrix(pred, model_data$reluctance_binary)
 
 ```
 
+# ----- ATTEMPTING TO PREDICT PROFILE 3 WITH SURVEY DATA -----
+
 > Attempts to predict profile membership using standard survey variables (e.g., Big Five traits or political leaning) yield low predictive power. The latent profile structure reflects internalized patterns of discomfort that cannot be inferred from personality or ideology alone. This reinforces the value of LPA as an independent tool for segmentation, not one easily substituted by common covariates.
 
 ```{r}
@@ -259,6 +266,8 @@ print(rf_segment)
 
 
 ```
+
+# ----- PROFILE VALIDATION USING PC1 AND RELUCTANCE LABELS -----
 
 > Analysis of the four latent profiles revealed clear behavioral distinctions. Profiles 2 and 3, with mean PC1 scores of 4.83 and 1.86 respectively, were composed entirely of students labeled “Reluctant” (100%). In contrast, Profile 4 — with the lowest discomfort score (mean PC1 = -3.20) — had zero students identified as reluctant. Profile 1, which exhibited moderate discomfort (mean PC1 = -0.60), had a mixed outcome, with 31% labeled reluctant. These findings validate the latent profiles as behaviorally meaningful and offer a segmentation framework for tailoring interventions based on distinct reluctance types.
 
@@ -323,6 +332,8 @@ train_control <- trainControl(
   savePredictions = "final"
 )
 
+# Custom tuning grid for mtry: exploring low, mid, and high values relative to total predictors (~25). Helps identify best tradeoff between bias and variance.
+
 # 5. Train the random forest model
 set.seed(123)
 rf_profile_model <- train(
@@ -331,7 +342,7 @@ rf_profile_model <- train(
   method = "rf",
   trControl = train_control,
   metric = "ROC",
-  tuneGrid = expand.grid(mtry = c(5, 10, 15))  # Adjust mtry based on # of vars
+  tuneGrid = expand.grid(mtry = c(5, 10, 15))  
 )
 
 # 6. Output and plot results

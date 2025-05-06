@@ -7,8 +7,8 @@ Using the 2024 Campus Expression Survey, I model predictors of student reluctanc
 
 - `data_ingestion/load_clean_data.Rmd` – Loads and cleans raw CES survey data.
 - `feature_engineering/feature_generation.Rmd` – Constructs features like composite reluctance scores and political ideology.
+- `regression_models.Rmd` – Fits linear and logistic regression models.
 - `pca_clustering.Rmd` – Runs PCA and clustering on discussion reluctance patterns.
-- ``modeling/`regression_models.Rmd` – Fits linear and logistic regression models.
 - `random_forest_cv.Rmd` – Random Forest classification with cross-validation and importance plots.
 - `final_project_analysis.pdf` – Final report.
 
@@ -21,7 +21,7 @@ Data must be obtained directly from Heterodox Academy. No raw data is included i
 You can run `report/final_project_analysis.Rmd` after executing the scripts in order:
 1. `data_ingestion/load_clean_data.Rmd`
 2. `feature_engineering/feature_generation.Rmd`
-3. Scripts related to modeling 
+3. Scripts related to modeling (i.e., `regression_models.Rmd`, `pca_clustering.Rmd`, `random_forest_cv.Rmd`)
 4. Finally, knit: `final_project_analysis.Rmd`
 
 ## Obtaining the Datatset
@@ -32,6 +32,3 @@ To obtain the dataset:
 1. Visit https://heterodoxacademy.org/campus-expression-survey/
 2. Locate the Campus Expression Survey (CES) 2023 report or contact HxA directly
 3. Request or download the .Rdata file made available for educational use
-
-
-

@@ -12,11 +12,26 @@ summary(baseline_model)
 
 ggplot(data, aes(x = controversial_discuss_score, fill = reluctance_binary)) +
   geom_histogram(binwidth = 0.1, position = "identity", alpha = 0.5, color = "black") +
-  labs(title = "Distribution of Controversial Discuss Score by Reluctance",
-       x = "Average Reluctance Score (1–4)",
-       y = "Count") +
+  labs(
+  title = "Observed Distribution of Discuss Scores by Reluctance Label",
+  subtitle = "Note: Fill colors show actual class labels, not model predictions",
+  x = "Average Reluctance Score (1–4)",
+  y = "Count"
+) +
   scale_fill_manual(values = c("Reluctant" = "red", "NotReluctant" = "blue"),
                     name = "Reluctance Binary") +
+  theme_minimal()
+
+# Predicted probabilities from logistic regression
+data$logit_pred_prob <- predict(baseline_model, type = "response")
+
+ggplot(data, aes(x = logit_pred_prob, fill = reluctance_binary)) +
+  geom_histogram(bins = 30, alpha = 0.6, color = "black", position = "identity") +
+  labs(title = "Histogram of Predicted Probabilities",
+       x = "Predicted Probability of Being Reluctant",
+       y = "Count",
+       subtitle = "From logistic regression model") +
+  scale_fill_manual(values = c("Reluctant" = "red", "Not Reluctant" = "blue")) +
   theme_minimal()
 
 # Dummy Baseline Majority Class
@@ -66,13 +81,15 @@ plot(lm_model, which = 2)
 
 data$lm_pred <- predict(lm_model)
 
-ggplot(data, aes(x = lm_pred, y = controversial_discuss_score)) +
-  geom_point(alpha = 0.3) +
-  geom_smooth(method = "lm", se = FALSE, color = "blue") +
-  labs(title = "Predicted vs. Actual Discuss Score",
-       x = "Predicted",
-       y = "Actual") +
+ggplot(data, aes(x = lm_pred, y = controversial_discuss_score, color = politics_overall_bin)) +
+  geom_point(alpha = 0.4) +
+  geom_smooth(method = "lm", se = FALSE, color = "black") +
+  labs(title = "Predicted vs. Actual Discuss Score by Political Orientation",
+       x = "Predicted Score",
+       y = "Actual Score",
+       color = "Political Orientation") +
   theme_minimal()
+
 ```
 
 
